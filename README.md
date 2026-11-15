@@ -105,10 +105,9 @@ running as administrator, and it borrows your cursor for real clicks, keys and s
 Windows also leaves Roamies out of every screen capture, so it won't show in your screenshots or screen shares.</sub>
 
 <sub>Spoken replies are billed to your own Fish Audio or Google AI Studio account; the panel shows what each voice model costs. Voice on
-Windows and Linux uses [NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)
-([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)), in the ONNX export by
-[istupakov](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx), run with
-[parakeet-rs](https://github.com/altunenes/parakeet-rs). The model (about 670 MB) downloads once at setup and isn't bundled.</sub>
+Windows and Linux uses [Whisper](https://github.com/openai/whisper) (small, 5-bit quantised for
+[whisper.cpp](https://github.com/ggml-org/whisper.cpp), MIT), read in Bahasa Indonesia. Whisper is multilingual, so
+Indonesian speech stays Indonesian text; the model (about 190 MB) downloads once at setup and isn't bundled.</sub>
 
 ## Get started
 

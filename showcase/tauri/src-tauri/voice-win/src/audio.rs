@@ -1,5 +1,5 @@
 // Audio in: the default microphone (cpal: WASAPI on Windows, ALSA on Linux, which PipeWire and PulseAudio
-// both answer) or a WAV file played in real time (dev tests), both mixed down to mono 16 kHz for Parakeet and
+// both answer) or a WAV file played in real time (dev tests), both mixed down to mono 16 kHz for Whisper and
 // metered for the listening animation.
 
 use crate::{Ev, RATE};

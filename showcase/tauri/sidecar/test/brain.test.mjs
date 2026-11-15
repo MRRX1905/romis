@@ -13,14 +13,14 @@ assert.equal(sideThinking('anthropic', 'claude-sonnet-5-5', 'high'), 'low', 'the
 assert.equal(sideThinking('anthropic', 'claude-sonnet-5-5', null), undefined, 'thinking off in the chat: off here too');
 assert.equal(sideThinking('huggingface', 'deepseek-ai/DeepSeek-V4.1-Flash', 'low'), undefined, 'a model that cannot think gets none');
 
-// Summary model first; if that fails, once more on the current model.
+// Side calls run on the model picked in the panel, through opencode: one try, no detour to a cheaper model.
 {
   const tried = [];
-  const run = async (o) => { tried.push(o.model); if (o.model === 'claude-sonnet-5-5') throw new Error('not on this plan'); return '{"facts":[]}'; };
-  const r = await oneShot({ provider: 'anthropic', model: 'claude-opus-5-5', system: 's', text: 't', run });
-  assert.deepEqual(tried, ['claude-sonnet-5-5', 'claude-opus-5-5']);
-  assert.equal(r.model, 'claude-opus-5-5');
-  await assert.rejects(oneShot({ provider: 'anthropic', model: 'claude-haiku-5-5', system: 's', text: 't', run: async () => { throw new Error('down'); } }), /down/, 'no second try on the same model');
+  const run = async (o) => { tried.push(o.model); return '{"facts":[]}'; };
+  const r = await oneShot({ provider: 'opencode', model: 'ollama/qwen3.5:9b', system: 's', text: 't', run });
+  assert.deepEqual(tried, ['ollama/qwen3.5:9b'], 'the picked model, once');
+  assert.equal(r.model, 'ollama/qwen3.5:9b');
+  await assert.rejects(oneShot({ provider: 'opencode', model: 'ollama/qwen3.5:9b', system: 's', text: 't', run: async () => { throw new Error('down'); } }), /down/, 'a failure is not retried on the same model');
 }
 
 // The reply: JSON (fenced or not), facts redacted and checked, replaces only for ids that exist.

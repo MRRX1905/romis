@@ -23,7 +23,7 @@
   };
   const sidekick = Roamie.ditherKit({
     id: 'guide', label: 'Guide', matrix: true, pixel: 1.3, glow: 0.55, speed: 80,
-    pal: [[4, 16, 18], [14, 92, 96], [40, 196, 184], [120, 255, 226], [230, 255, 250]],
+    pal: [[5, 8, 10], [58, 17, 20], [122, 27, 32], [179, 19, 27], [230, 231, 234]],
     // busy: no random acts; pose: whatever the current step wants, except while acting something out.
     // calm while a quip is up: the act keeps its gesture but drops its icon, which would sit on the bubble.
     plugin: (kit) => { K = kit; return { busy: () => true, calm: () => !!quipText && clock < quipUntil, pose: () => (clock < actUntil ? null : poseFn?.(clock) ?? null) }; },
@@ -355,134 +355,36 @@
     moveTo(HOME.x, r.top + r.height / 2 + 6);
   }
 
-  // ---------------------------------------------------------------- step 2: connect AI
-  // Sign-in cards, or (Use an API key instead) a card per key provider with a field for its key. A sign-in can
-  // always be cancelled (click its card again) or swapped for another (click that one), and gives up after
-  // 3 minutes, so a browser tab closed halfway never leaves it stuck on "Waiting".
-  const LOGIN_MS = 3 * 60_000;
+  // ---------------------------------------------------------------- step 2: the brain
+  // The brain is the opencode CLI on this computer: this step only says whether it answers and which of its models to
+  // use. There is no sign-in and no key here; Check again looks at opencode once more.
   const ai = {
-    busy: null, loginId: null, status: '', timer: null, mode: 'signin', key: null, keyBusy: null,
+    busy: false,
     render() {
-      $('ai-lead').textContent = ai.mode === 'key' ? 'Pick where your key is from, then paste it.' : "Sign in with an AI account you have. Using GG Coder? You're already in.";
-      $('providers').hidden = ai.mode !== 'signin';
-      $('key-providers').hidden = ai.mode !== 'key';
-      $('key-toggle').textContent = ai.mode === 'key' ? 'Sign in instead' : 'Use an API key instead';
-      $('providers').replaceChildren(...(state?.oauth ?? []).map((p) => {
-        const busy = ai.busy === p.id;
-        const b = el('button', { className: `px prov${p.connected ? ' on' : ''}${busy ? ' busy' : ''}`, type: 'button' },
-          el('span', { textContent: p.name }), led(p.connected ? 'on' : busy ? 'busy' : ''),
-          el('small', { textContent: busy ? ai.waitText() : p.connected ? 'Connected' : p.company }));
-        if (busy) b.setAttribute('aria-label', `${p.name}: ${ai.waitText()}. Click to cancel.`);
-        b.onclick = () => (busy ? ai.cancel() : ai.login(p));
-        return b;
-      }));
-      $('key-providers').replaceChildren(...(state?.apikey ?? []).map((p) => {
-        const busy = ai.keyBusy === p.id;
-        // One line each, so fourteen fit with the key field under them: the light says Connected (and the field's label).
-        const b = el('button', { className: `px prov${p.connected ? ' on' : ''}${busy ? ' busy' : ''}`, type: 'button', title: p.connected ? `${p.name}: connected` : '' },
-          el('span', { textContent: p.name }), led(p.connected ? 'on' : busy ? 'busy' : ''));
-        b.setAttribute('aria-label', `${p.name}${busy ? ', checking the key' : p.connected ? ', connected' : ''}`);
-        b.setAttribute('aria-pressed', String(ai.key === p.id));
-        b.onclick = () => ai.pickKey(p);
-        return b;
-      }));
-      const k = (state?.apikey ?? []).find((p) => p.id === ai.key);
-      $('key-form').hidden = ai.mode !== 'key' || !k;
-      if (k) {
-        $('key-label').textContent = k.connected ? `${k.name} is connected. Paste a new key to replace it` : `Paste your ${k.name} API key`;
-        $('key-link').hidden = !k.link;
-        $('key-link').setAttribute('aria-label', `Get a ${k.name} API key (opens your browser)`);
-        $('key-save').disabled = !!ai.keyBusy;
-      }
+      const oc = state?.opencode ?? { ok: false, reason: '', models: [] };
+      const want = state?.model?.id ?? '';
+      const picked = oc.models.some((m) => m.id === want) ? want : oc.models[0]?.id ?? '';
+      $('ai-lead').textContent = oc.ok
+        ? 'I think with the opencode CLI on this computer, so there is no key to paste here.'
+        : `opencode is not answering yet: ${oc.reason || 'not found on PATH'}. Install it, run it once in a terminal, then check again.`;
+      $('providers').replaceChildren(el('div', { className: `prov${oc.ok ? ' on' : ''}`, role: 'status' },
+        el('span', { textContent: 'opencode' }), led(oc.ok ? 'on' : ''),
+        el('small', { textContent: oc.ok ? `${oc.models.length} model${oc.models.length === 1 ? '' : 's'} on this computer` : 'not running' })));
+      $('ai-model').replaceChildren(...oc.models.map((m) => el('option', { value: m.id, textContent: m.name, selected: m.id === picked })));
+      $('ai-model-form').hidden = !oc.ok || !oc.models.length;
+      $('ai-check').disabled = ai.busy;
       nav();
-    },
-    // What the waiting card says: Claude's download progress, else how to get out of it.
-    waitText() {
-      const st = ai.status, pct = /(\d+)%/.exec(st)?.[1], mb = /(\d+) MB/.exec(st)?.[1];
-      if (/^Downloading/.test(st)) return pct ? `Downloading ${pct}%` : mb ? `Downloading ${mb} MB` : 'Downloading…';
-      if (/^Checking/.test(st)) return 'Checking download…';
-      if (/^Unpacking/.test(st)) return 'Unpacking…';
-      return 'Waiting… click to cancel';
-    },
-    login(p) {
-      if (ai.busy) ai.stop();
-      ai.busy = p.id; ai.status = ''; ai.loginId = `g${Date.now().toString(36)}`;
-      $('login-error').hidden = true; ai.render();
-      poseFn = POSE.think();
-      quip(p.id === 'anthropic' ? 'Claude takes a minute' : "Sign in there. I'll wait!", 3.2);
-      send({ type: 'ob_login', provider: p.id, id: ai.loginId });
-      ai.arm();
-    },
-    // The 3 minutes restart whenever there's progress (Claude's one-time download can take a while).
-    arm() { clearTimeout(ai.timer); ai.timer = setTimeout(() => ai.cancel('Took too long. Try again?'), LOGIN_MS); },
-    stop() {
-      clearTimeout(ai.timer);
-      if (ai.loginId) send({ type: 'ob_login_cancel', id: ai.loginId });
-      ai.busy = null; ai.loginId = null; ai.status = ''; poseFn = null;
-      askId = null; $('code-form').hidden = true;
-    },
-    cancel(why) {
-      if (!ai.busy) return;
-      ai.stop();
-      if (why) { showError('login-error', why); quip('Hmm. Try again?'); }
-      else quip('Okay, stopped.');
-      ai.render();
-    },
-    pickKey(p) {
-      ai.key = p.id; $('login-error').hidden = true; ai.render();
-      $('key-input').focus();
-    },
-    onLogin(msg) {
-      // A key save has no id; a sign-in's messages carry the one this guide gave it. Older attempts are ignored.
-      if (msg.id == null ? ai.keyBusy !== msg.provider : msg.id !== ai.loginId) return;
-      if (msg.phase === 'browser') return;
-      if (msg.phase === 'status') { ai.status = String(msg.text ?? ''); ai.arm(); ai.render(); return; }
-      clearTimeout(ai.timer);
-      ai.busy = null; ai.loginId = null; ai.status = ''; ai.keyBusy = null; poseFn = null;
-      if (msg.phase === 'done') { act('hype'); quip('Ooh, a brain!'); $('code-form').hidden = true; }
-      else { showError('login-error', msg.error || "That didn't work. Try again.", msg.copy); quip('Hmm. Try again?'); }
-      ai.render();
     },
     enter() {
       ai.render();
-      setTimeout(() => at('ai') && quip(state?.connected ? 'Already connected!' : 'Pick one you have'), 700);
-      if (state?.connected) setTimeout(() => at('ai') && act('hype'), 900);
-      else poseFn = POSE.point(1.7, 0.05);
+      if (state?.opencode?.ok) setTimeout(() => at('ai') && act('hype'), 700);
+      setTimeout(() => at('ai') && quip(state?.opencode?.ok ? 'Already thinking' : 'One check first'), 600);
       aim($('providers'));
     },
-    // A sign-in carries on after leaving the step; it's only cancelled by the card or the timeout.
-    leave() { if (!ai.busy) poseFn = null; },
+    leave() {},
   };
-  let askId = null;
-  $('code-form').addEventListener('submit', (e) => {
-    e.preventDefault();
-    const v = $('code-input').value.trim();
-    if (!v || !askId) return;
-    send({ type: 'answer', id: askId, text: v });
-    askId = null; $('code-form').hidden = true; $('code-input').value = '';
-  });
-  for (const [id, type, line] of [['autolisten-switch', 'ob_autolisten', "I'll listen right after."], ['wake-switch', 'ob_wake', 'Just say hey!']]) {
-    $(id).addEventListener('click', () => { const on = $(id).getAttribute('aria-checked') !== 'true'; $(id).setAttribute('aria-checked', String(on)); send({ type, on }); if (on) quip(line); });
-  }
-  $('key-toggle').addEventListener('click', () => {
-    ai.mode = ai.mode === 'key' ? 'signin' : 'key';
-    $('login-error').hidden = true;
-    ai.render();
-    $(ai.mode === 'key' ? 'key-providers' : 'providers').querySelector('button')?.focus();
-  });
-  $('key-link').addEventListener('click', () => {
-    const k = (state?.apikey ?? []).find((p) => p.id === ai.key);
-    if (k?.link) { send({ type: 'open_link', url: k.link }); quip('Copy it, then paste here'); }
-  });
-  $('key-form').addEventListener('submit', (e) => {
-    e.preventDefault();
-    const key = $('key-input').value.trim();
-    if (!key || !ai.key) return $('key-input').focus();
-    ai.keyBusy = ai.key; ai.render();
-    poseFn = POSE.think();
-    send({ type: 'ob_apikey', provider: ai.key, key });
-    $('key-input').value = '';
-  });
+  $('ai-check').addEventListener('click', () => { ai.busy = true; ai.render(); send({ type: 'ob_check_opencode' }); });
+  $('ai-model').addEventListener('change', () => { const v = $('ai-model').value; if (v) send({ type: 'ob_model', id: v }); });
 
   // ---------------------------------------------------------------- step 3: how replies come
   // Text only, or Voice + text (spoken with Fish Audio, Gemini or VoiceStudio). Fish Audio and Gemini need the user's
@@ -1267,6 +1169,7 @@
       case 'state': {
         const first = !state;
         state = msg;
+        ai.busy = false; // a fresh look at opencode lands here
         if (Roamie.sfx) Roamie.sfx.enabled = msg.sound !== false;
         if (first) { sidekick.setLook?.(msg.look); sidekick.setForm?.(msg.size); }
         if (at('welcome')) look.render();
@@ -1274,17 +1177,7 @@
         else { if (at('perms')) perms.render(); if (at('ai')) ai.render(); if (at('voice')) replies.render(); if (at('keys')) keys.render(); }
         break;
       }
-      case 'login': ai.onLogin(msg); break;
       case 'fish': replies.onFish(msg); break;
-      case 'ask':
-        askId = msg.id;
-        $('code-label').textContent = msg.prompt || 'Paste the code from your browser';
-        $('code-input').type = msg.mask ? 'password' : 'text';
-        $('code-input').placeholder = msg.placeholder || '';
-        $('code-form').hidden = false; $('code-input').focus();
-        quip('Paste the code here');
-        break;
-      case 'cancel_ask': if (askId === msg.id) { askId = null; $('code-form').hidden = true; } break;
       case 'files': perms.applyFiles(msg.status); if (at('perms')) perms.render(); break;
       case 'keys':
         if (state) state.keys = msg.keys;

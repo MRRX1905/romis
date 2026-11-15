@@ -9,6 +9,7 @@ import { registerRuntimeModels } from '@kenkaiiii/gg-core';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import { ClaudeCodeAgent } from './claudecode.mjs';
+import { OpenCodeAgent } from './opencode.mjs';
 import { agentEvents } from './agentstream.mjs';
 import { createTools } from './tools.mjs';
 import { agentSystem, checkFinish, toolsFor } from './agents.mjs';
@@ -107,7 +108,7 @@ async function run({ agent: a, model: md, content }) {
   };
   const Fake = process.env.ROAMIES_FAKE_AGENT ? (await import(pathToFileURL(process.env.ROAMIES_FAKE_AGENT).href)).default : null;
   if (Fake) agent = new Fake({ ...common, provider: md.provider });
-  else if (route === 'claude-code') agent = new ClaudeCodeAgent({ ...common, executable: md.cc.executable, env: md.cc.env, cwd: a.dir });
+  else if (route === 'opencode') agent = new OpenCodeAgent({ ...common, tools, maxTurns: common.maxTurns });
   else {
     agent = new Agent({
       ...common, provider: md.provider, maxTurnExtensions: 0, baseUrl: md.baseUrl, transportSessionId: a.id ? `roamies-agent-${a.id}` : undefined,

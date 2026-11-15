@@ -42,29 +42,17 @@
 
     <section class="step" id="step-ai" data-name="Connect AI" aria-labelledby="h-2" hidden>
       <h1 id="h-2">Give me a brain</h1>
-      <p class="lead" id="ai-lead">Sign in with an AI account you have. Using GG Coder? You're already in.</p>
+      <p class="lead" id="ai-lead">I think with the opencode CLI on this computer, so there is no key to paste here.</p>
       <div class="providers two" id="providers"></div>
-      <div class="providers keys" id="key-providers" hidden></div>
-      <form class="inline" id="code-form" hidden>
-        <label for="code-input" id="code-label">Paste the code from your browser</label>
+      <div class="inline" id="ai-model-form" hidden>
+        <div class="label-row"><label for="ai-model">Model</label></div>
         <div class="field-row">
-          <span class="px field"><input id="code-input" autocomplete="off" spellcheck="false"></span>
-          <button class="px btn primary" type="submit">Submit</button>
+          <span class="px field select"><select id="ai-model" aria-label="Model"></select></span>
+          <button class="px btn primary" type="button" id="ai-check">Check again</button>
         </div>
-      </form>
-      <form class="inline" id="key-form" hidden>
-        <div class="label-row">
-          <label for="key-input" id="key-label">API key</label>
-          <button class="link" type="button" id="key-link" hidden>Get a key</button>
-        </div>
-        <div class="field-row">
-          <span class="px field"><input id="key-input" type="password" placeholder="Paste API key" autocomplete="off" spellcheck="false" maxlength="1000"></span>
-          <button class="px btn primary" type="submit" id="key-save">Save</button>
-        </div>
-      </form>
-      <button class="link" type="button" id="key-toggle">Use an API key instead</button>
+      </div>
       <p class="error" id="login-error" role="alert" hidden></p>
-      <p class="note">Your messages, and screenshots when you ask about the screen, go to the AI provider you pick, under its privacy policy.</p>
+      <p class="note">Your messages, and screenshots when you ask about the screen, go to the model you pick, through opencode.</p>
     </section>
 
     <section class="step" id="step-voice" data-name="Replies" aria-labelledby="h-voice" hidden>

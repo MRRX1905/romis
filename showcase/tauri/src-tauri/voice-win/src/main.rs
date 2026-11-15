@@ -1,8 +1,9 @@
 // Voice helper for Roamies on Windows and Linux: the twin of voice/main.swift, with the same JSON lines in and out.
 // Watches the talk chord (GetAsyncKeyState on Windows, the X server on Linux X11 sessions; neither needs a
 // permission), records the default microphone and
-// transcribes on this PC with NVIDIA Parakeet TDT 0.6B v3 (int8 ONNX via parakeet-rs). Parakeet isn't a
-// streaming model, so live text comes from re-reading the take about once a second.
+// transcribes on this PC with Whisper (multilingual, via whisper.cpp). Whisper isn't a streaming model, so live text
+// comes from re-reading the take about once a second. It is read in the language Roamies speaks (--lang), because
+// auto-detection on a two-second command guesses wrong and English text comes out of Indonesian speech.
 // Hold the chord = push-to-talk (release sends). Quick tap = hands-free (ends on a pause or another tap).
 // While the chord is held, moving the cursor round something circles it (ink.rs); the circled area goes out with
 // what was said, as on macOS (Windows only). On Wayland no app can watch the keyboard, so there {"cmd":"toggle"}
@@ -20,7 +21,7 @@ mod ink;
 mod keys;
 
 use audio::{MicError, Sink, Source};
-use parakeet_rs::{ExecutionConfig, ParakeetTDT, Transcriber};
+use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -63,40 +64,75 @@ struct Job {
     last: bool,
 }
 
+/// The model file inside the downloaded folder: whisper.cpp's multilingual base model, 5-bit quantised.
+pub const MODEL_FILE: &str = "ggml-base-q5_1.bin";
+
 fn model_present(dir: &Path) -> bool {
-    dir.join("vocab.txt").is_file() && dir.join("encoder-model.int8.onnx").is_file() && dir.join("decoder_joint-model.int8.onnx").is_file()
+    dir.join(MODEL_FILE).is_file()
 }
 
-fn load_model(dir: &Path) -> Result<ParakeetTDT, String> {
-    // Half the cores: quick enough to read a minute of speech in a second or two, without starving the PC.
-    let threads = thread::available_parallelism().map(|n| n.get() / 2).unwrap_or(2).clamp(1, 8);
+/// Half the cores: quick enough to read a minute of speech in a second or two, without starving the PC.
+fn threads() -> i32 {
+    thread::available_parallelism().map(|n| n.get() / 2).unwrap_or(2).clamp(1, 8) as i32
+}
+
+fn load_model(dir: &Path) -> Result<WhisperContext, String> {
     let t0 = Instant::now();
-    let env = parakeet_rs::ort::init().with_name("roamies-voice").build().map_err(|e| e.to_string())?;
-    let config = ExecutionConfig::new().with_environment(env).with_intra_threads(threads);
-    let mut asr = ParakeetTDT::from_pretrained(dir, Some(config)).map_err(|e| e.to_string())?;
-    // One short warm-up run, so the first real request doesn't pay for ONNX Runtime's setup.
-    let _ = asr.transcribe_samples(vec![0.0; RATE as usize / 2], RATE, 1, None);
-    log(&format!("model ready in {:.1}s ({threads} threads)", t0.elapsed().as_secs_f64()));
-    Ok(asr)
+    let file = dir.join(MODEL_FILE);
+    let path = file.to_str().ok_or_else(|| format!("model path isn't valid UTF-8: {}", file.display()))?;
+    let ctx = WhisperContext::new_with_params(path, WhisperContextParameters::default()).map_err(|e| e.to_string())?;
+    // No warm-up read: whisper.cpp pads every take to thirty seconds, so warming up on a slice of silence costs a full
+    // pass and reads nothing.
+    log(&format!("model ready in {:.1}s ({} threads)", t0.elapsed().as_secs_f64(), threads()));
+    Ok(ctx)
 }
 
-fn transcribe(asr: &mut ParakeetTDT, audio: Vec<f32>) -> String {
+/// Reads one take. `lang` is the language it is spoken in; None lets Whisper guess.
+fn transcribe(ctx: &WhisperContext, audio: Vec<f32>, lang: Option<&str>) -> String {
     if audio.len() < RATE as usize / 5 {
         return String::new();
     }
-    match asr.transcribe_samples(audio, RATE, 1, None) {
-        Ok(r) => r.text.split_whitespace().collect::<Vec<_>>().join(" "),
+    let mut state = match ctx.create_state() {
+        Ok(s) => s,
         Err(e) => {
             log(&format!("transcribe: {e}"));
-            String::new()
+            return String::new();
+        }
+    };
+    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+    params.set_n_threads(threads());
+    params.set_translate(false);
+    params.set_language(lang);
+    params.set_print_special(false);
+    params.set_print_progress(false);
+    params.set_print_realtime(false);
+    params.set_print_timestamps(false);
+    // Silence otherwise invites a page of invented words, which is the slowest thing this can do.
+    params.set_suppress_blank(true);
+    params.set_temperature(0.0);
+    // A spoken command is a handful of words: without a cap whisper.cpp can spend hundreds of decoding steps on a
+    // silence-padded take, and every step costs real time on a laptop.
+    params.set_n_max_text_ctx(64);
+    if let Err(e) = state.full(params, &audio[..]) {
+        log(&format!("transcribe: {e}"));
+        return String::new();
+    }
+    let n = state.full_n_segments();
+    let mut text = String::new();
+    for i in 0..n {
+        if let Some(seg) = state.get_segment(i) {
+            if let Ok(part) = seg.to_str() {
+                text.push_str(part);
+            }
         }
     }
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn spawn_engine(dir: PathBuf, tx: Sender<Ev>) -> (Sender<Job>, thread::JoinHandle<()>) {
+fn spawn_engine(dir: PathBuf, lang: Option<String>, tx: Sender<Ev>) -> (Sender<Job>, thread::JoinHandle<()>) {
     let (jtx, jrx) = mpsc::channel::<Job>();
     let handle = thread::spawn(move || {
-        let mut asr = match load_model(&dir) {
+        let asr = match load_model(&dir) {
             Ok(a) => a,
             Err(e) => {
                 log(&format!("model failed to load: {e}"));
@@ -112,7 +148,7 @@ fn spawn_engine(dir: PathBuf, tx: Sender<Ev>) -> (Sender<Job>, thread::JoinHandl
                 Some(i) => jobs.swap_remove(i),
                 None => jobs.pop().expect("at least one job"),
             };
-            let text = transcribe(&mut asr, job.audio);
+            let text = transcribe(&asr, job.audio, lang.as_deref());
             if tx.send(Ev::Text { take: job.take, text, last: job.last }).is_err() {
                 return;
             }
@@ -141,7 +177,7 @@ const MAX_SESSION: f64 = 60.0;
 const TAIL: f64 = 0.3;
 const FINAL_TIMEOUT: f64 = 30.0;
 const READ_EVERY: f64 = 0.8;
-// Parakeet makes up words ("Thank you.") from silence, so a take is only read once the mic heard a voice:
+// Whisper makes up words ("Thank you.") from silence, so a take is only read once the mic heard a voice:
 // about -49 dBFS, above room noise and below quiet speech.
 const SPEECH_LEVEL: f64 = 0.15;
 
@@ -594,12 +630,15 @@ fn main() {
         windows_sys::Win32::UI::HiDpi::SetProcessDpiAwarenessContext(windows_sys::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
 
+    // The language spoken into the mic; "auto" (or no --lang) lets Whisper guess.
+    let lang = arg(&args, "--lang").filter(|l| l != "auto" && !l.is_empty());
+
     if let Some(wav) = arg(&args, "--transcribe") {
         let dir = model.expect("--transcribe needs --model <dir>");
-        let mut asr = load_model(&dir).unwrap_or_else(|e| panic!("model: {e}"));
+        let asr = load_model(&dir).unwrap_or_else(|e| panic!("model: {e}"));
         let (samples, rate) = audio::read_wav(Path::new(&wav)).unwrap_or_else(|e| panic!("{wav}: {e}"));
         let t0 = Instant::now();
-        let text = transcribe(&mut asr, samples.clone());
+        let text = transcribe(&asr, samples.clone(), lang.as_deref());
         emit(json!({ "text": text, "seconds": (t0.elapsed().as_secs_f64() * 100.0).round() / 100.0, "audio": samples.len() as f64 / rate as f64 }));
         return;
     }
@@ -607,7 +646,7 @@ fn main() {
     let (tx, rx): (Sender<Ev>, Receiver<Ev>) = mpsc::channel();
     let (engine, engine_thread) = match &model {
         Some(dir) if model_present(dir) => {
-            let (jobs, handle) = spawn_engine(dir.clone(), tx.clone());
+            let (jobs, handle) = spawn_engine(dir.clone(), lang.clone(), tx.clone());
             (Some(jobs), Some(handle))
         }
         _ => {
@@ -630,7 +669,7 @@ fn main() {
         let _ = stdin_tx.send(Ev::StdinClosed);
     });
 
-    emit(json!({ "type": "ready", "engine": "parakeet", "model": voice.engine.is_some() }));
+    emit(json!({ "type": "ready", "engine": "whisper", "model": voice.engine.is_some() }));
     loop {
         let quit = match rx.recv_timeout(Duration::from_millis(16)) {
             Ok(ev) => {
@@ -718,7 +757,7 @@ mod tests {
         v.toggle();
         v.tail_until = Some(0.0);
         v.tick();
-        assert!(jobs.try_recv().is_err(), "silence isn't read (Parakeet makes words up from it)");
+        assert!(jobs.try_recv().is_err(), "silence isn't read (Whisper makes words up from it)");
         assert_eq!(v.phase, Phase::Idle);
         let _ = std::fs::remove_file(wav);
     }

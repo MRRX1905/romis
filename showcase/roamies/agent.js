@@ -389,7 +389,7 @@
     // Bubble text: Martian Mono (0.7 em per letter), sized to the bubble's line grid.
     const fontPx = (t) => Math.round(CH * t * 0.64 * 2) / 2;
     const colW = (t) => fontPx(t) * 0.7 + 0.35;
-    const TEXT_INK = '#dcfff6', TEXT_ACCENT = '#78ffe2';
+    const TEXT_INK = '#e6e7ea', TEXT_ACCENT = '#b3131b';
     const T = () => clamp(k.P * 0.42, 1.4, 2.4);
     const G = R.glass;
     // Padding inside a bubble. The thinking tag is slim, one line, with its three dots before the words.

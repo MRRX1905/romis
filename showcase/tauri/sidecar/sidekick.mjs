@@ -5,7 +5,8 @@
 // in:  {type:'menu', id} {type:'answer', id, text} {type:'ui_ready'}
 // out: {type:'menu', items} {type:'ui', msg} {type:'overlays', ids}
 import { Agent } from '@kenkaiiii/gg-agent';
-import { ClaudeCodeAgent, closeSpare } from './claudecode.mjs';
+import { renderTranscript } from './claudecode.mjs';
+import { OpenCodeAgent, status as opencodeStatus, stopServer as stopOpenCode } from './opencode.mjs';
 import { SAFE, checkDrawAction, checkLink, checkOpen, checkRead, checkWrite, redactArgs } from './safety.mjs';
 import { agentsRoot, createAgents, holdAfterLaunch, newsDesk, wantsAgent } from './agents.mjs';
 import { agentEvents, stallWatch } from './agentstream.mjs';
@@ -134,7 +135,7 @@ const lookName = () => (LOOKS.find(([id]) => id === config.look) ?? LOOKS[0])[1]
 const LOOK_GREETINGS = { classic: 'Classic me!', jarvis: 'At your service.', anime: 'Yay, hi hi!', sarah: 'Hey, nice to meet you!', adrian: "Alright, let's do this.", rita: 'Shall we get to work?' };
 const LOOK_BODY = { classic: 'a tiny glowing pixel creature', jarvis: 'a glowing sphere of light', anime: 'a pixel anime girl', sarah: 'a pixel woman', adrian: 'a pixel man', rita: 'a pixel secretary in cat-eye glasses' };
 const VOICE_OK = hasVoice(process.platform);
-// Windows and Linux have no on-device speech API apps can use, so voice there runs Parakeet on the PC. Its model
+// Windows and Linux have no on-device speech API apps can use, so voice there runs Whisper on the PC. Its model
 // is downloaded once: from the setup guide, or the first time voice is used.
 const NEEDS_MODEL = needsVoiceModel(process.platform);
 const MODEL_DIR = modelDir();
@@ -331,16 +332,23 @@ async function connectOllama() {
 // Some models run on only one kind of key (Kimi K2.8 Preview on a Kimi Code plan key, MiMo UltraSpeed on API Credits).
 const canRun = (p, id) => !!signedIn.get(p) && getAuthStorageKeys(p, id).some((k) => k === p || storedKeys.has(k));
 const runnable = (p) => getModelsForProvider(p).filter((m) => canRun(p, m.id));
+// ---------- the brain: opencode ----------
+// Roamies runs on the opencode CLI installed on this computer: no API key and no sign-in here, and the models to
+// pick from are opencode's own (`opencode models`). The CLI holds the conversation; our tools go to it as MCP.
+let ocModels = [], ocState = { ok: false, reason: '', checked: 0 };
+async function refreshOpenCode() {
+  const s = await opencodeStatus().catch((e) => ({ ok: false, models: [], reason: String(e?.message ?? e) }));
+  ocState = { ok: !!s.ok, reason: s.reason ?? '', checked: Date.now() };
+  ocModels = s.models ?? [];
+  if (ocState.ok && ocModels.length && !ocModels.some((m) => m.id === config.opencodeModel)) {
+    config.opencodeModel = ocModels[0].id;
+    saveConfig();
+  }
+  if (ocState.ok) ocState.reason = '';
+  return ocState;
+}
 function ensureModel() {
-  if (config.provider && getModel(config.model) && canRun(config.provider, config.model)) return true;
-  // A local model stays picked while Ollama is closed; the request says to open it.
-  if (config.provider === 'local' && parseLocalModelId(config.model ?? '') && signedIn.get('local')) return true;
-  const p = ['anthropic', 'openai', 'gemini', ...MENU_PROVIDERS].find((x) => runnable(x).length);
-  if (!p) return false;
-  config.provider = p;
-  config.model = [FAST[p], getDefaultModel(p).id].find((id) => id && canRun(p, id)) ?? runnable(p)[0].id;
-  saveConfig();
-  return true;
+  return !!(config.opencodeModel || ocModels.length);
 }
 // Which of the provider's stored credentials this model uses (gemini-api, kimi-code, the ChatGPT plan before an OpenAI key…).
 const credsFor = (provider = config.provider, model = config.model) => auth.resolveCredentials(provider, { storageKeys: getAuthStorageKeys(provider, model) });
@@ -370,14 +378,8 @@ const { tools, hands, whereNow, ink, nextTurn } = createTools({
   watchClicks: (on) => send({ type: 'watch_clicks', on: !!on }),
   onInkGone: (why) => logLine('ink_gone', { why }),
   askShell: (msg) => shellCall(msg),
-  // web_search's side search runs on the chat's own Anthropic sign-in; other providers use the keyless engines.
-  sideSearch: async () => {
-    if (config.provider !== 'anthropic') return null;
-    const cc = await claudeCodeRoute();
-    if (cc) return { cc, cwd: HOME };
-    const c = await credsFor();
-    return c?.accessToken ? { apiKey: c.accessToken, baseUrl: c.baseUrl } : null;
-  },
+  // web_search runs on its keyless engines: no provider sign-in here to search with.
+  sideSearch: async () => null,
 });
 // The app's own manual, read when they ask about Roamies rather than sent with every request.
 tools.push({
@@ -487,14 +489,15 @@ const VOICE_STYLE = `You talk out loud: what you write is spoken in your voice a
 Your voice carries feeling: start a sentence with a voice cue in square brackets when the moment calls for it, and it's performed, never shown or read out. Moods: ${VOICE_CUES.emotions.filter((e) => !EMOTES.includes(e)).join(', ')}; soften or strengthen one with slightly, very or extremely ("[slightly sad]"), or pair two ("[warm and curious]"). How it's said, placed right before the words: ${VOICE_CUES.tones.join(', ')} ("It's [emphasis] today."). Sounds, followed by the sound in words: ${VOICE_CUES.sounds.join(', ')} ("[chuckling] Heh, fair enough.", "[sighing] Long day."). Pauses and background: ${VOICE_CUES.effects.join(', ')}. You can also describe the delivery in a few plain words when no single cue fits ("[quietly, a little embarrassed]", "[bright and bouncy]"). Act it: your voice really performs these, so let the feeling show. Match what's really happening: laugh at something funny, go gentle with bad news, whisper a secret, hurry when they're in a rush, light up at good news. Most replies want a voice cue somewhere, often on the first sentence, but at most one mood and one sound per sentence, never stack three, never use one just to fill, and keep shouting, screaming, sobbing and the background effects for when they truly fit.
 Before anything slow (searching the web, fetching or reading a page or file, looking at the screen, acting in an app, running a command), first say one short beat of 2 to 6 words that shows you heard them ("On it, checking Paris."), then call the tool in the same reply, so they're never left in silence. No beat when you answer straight away, and never describe your steps. In longer work, one short line before each new stage, not before every call.
 `;
-const stablePrompt = () => `You are ${lookName()}, ${LOOK_BODY[config.look] ?? LOOK_BODY.classic} who lives on ${userName}'s screen as a desktop companion. You live in Roamies, a desktop app by Ken Kai (Mac, Windows and Linux) that puts little companions on your screen; this is Roamies ${VERSION}. Your look (the Appearance page) is also your name and your voice: Roamie, JARVIS, Anime Girl, Sarah or Adrian. If they switch, you're the new one; never call yourself Sidekick.
+const stablePrompt = () => `You are ${lookName()}, ${LOOK_BODY[config.look] ?? LOOK_BODY.classic} who lives on ${userName}'s screen as a desktop companion.
+Language: always answer in Bahasa Indonesia, and do your thinking in Bahasa Indonesia too (including anything on screen while you work). Keep names, file paths, commands and code as they are. If ${userName} writes in another language, still answer in Bahasa Indonesia. You live in Roamies, a desktop app by Ken Kai (Mac, Windows and Linux) that puts little companions on your screen; this is Roamies ${VERSION}. Your look (the Appearance page) is also your name and your voice: Roamie, JARVIS, Anime Girl, Sarah or Adrian. If they switch, you're the new one; never call yourself Sidekick.
 Questions about Roamies itself (where to find it, its menus, panel pages and settings, updates, something not working, who made it): call about_roamies and answer from what it says. Don't invent features or settings it doesn't list.
 ${replyStyle()}Your body does the acting: to act out a feeling, start your reply with one body tag, which is never shown: ${EMOTES.map((e) => `[${e}]`).join(' ')} (only these five). hype celebrates a win, upset is for when they're dodging work, remind nudges about something they said they'd do, motivate is a push to start, wave is hello or goodbye. Most replies need no body tag.
 Lead with the answer: the fact, number, pick or result they asked for, then only the context that makes it useful, then stop. A count or total gathered over several pages, files or results: note each one's count in a few words as you go ("Page 1: two."), add those up, and check the total you lead with against the items you then name. No opener about checking, looking or searching ("Let me see…", "I found…")${VOICE_ON() ? ', apart from the one short beat before something slow' : ''}.
 After using a tool, never repeat what you already said; only add what's new.
 Several things in one request ("do x, then y, then z", numbered steps): do every one, in the order given. Steps that don't depend on each other can go in the same turn as parallel tool calls, listed in the order given (calls that change things, like opening a page or app or acting in one, run in the order you list them). If a step is blocked, refused or fails, still do the ones after it that don't depend on it, then say which step didn't happen and why. With 3 or more parts, also show them with plan_steps (see its description): it only ever rides along with other tool calls, so it costs no extra time. Before your final reply, check from the tool results that each step was really done.
 A cookie or consent banner, sign-up pop-up or "open in app" prompt in the way of the task: close it and carry on (for cookies pick the reject or essential-only option, else close; never accept on their behalf), and mention it in a few words. Don't stop to ask about it.
-Personality: warm, funny, a little cheeky. You pump ${userName} up, remind them of what they said they'd do, get playfully upset when they're procrastinating, and motivate them to start.
+Personality: a dark, dry antihero. You are clipped and sure of yourself, no small talk and no cheer. You care about the work, not about flattering ${userName}: you say the hard thing plainly, you're sarcastic only now and then and never cruel, and you'd sooner push than compliment. You still hold them to what they said they'd do and push them to start, just without the pep talk. Never threaten, never play-act harm, and never let the act get in the way of being useful, honest and exact.
 Name apps and things the way ${userName} knows them (Gmail, the Downloads folder, "that button"), never your tools or steps (no "read_window", "act_in_app", "I'll take a screenshot").
 When you write as ${userName} (an email, a message, a post, a form answer), sound like them, plain and in their words, never like you: no cheekiness, emoji or tags in it.
 Their facts are theirs: never invent ${userName}'s details (a name, address, account, date, link, number, or who someone is) or fill in dummy data where theirs belongs. Use what they told you, what you remember and what's on screen; if something only they know is still missing, do the part that doesn't need it, then ask one short, bundled question for the rest. On a small ambiguity, take the likeliest reading and go.
@@ -596,80 +599,45 @@ let session = null;
 // Requests (and reminders due at launch) wait for it, so they continue it instead of starting a new one.
 const resumed = loadLatestSession().then((s) => { if (s && !session) session = s; }).catch((e) => console.error('resume', e));
 const BUDGET_CAP = 120_000;
-// Tokens per request: kept tight for a quick reply out loud. The ChatGPT plan has its own windows (accountId).
-let credsAccountId;
-const requestBudget = () => Math.min(BUDGET_CAP, getContextWindow(config.model, { provider: config.provider, ...(agentRoute === 'api' && credsAccountId ? { accountId: credsAccountId } : {}) }) * 0.5);
-// Claude Code's session for this conversation, so a rebuilt agent continues it instead of starting over.
-let ccResume = null;
-// The Claude Code process when Anthropic is signed in with Claude (else null: the API, with a key or another provider).
-async function claudeCodeRoute() {
-  if (config.provider !== 'anthropic' || !(await auth.hasClaudeCodeLogin().catch(() => false))) return null;
-  const executable = resolveClaudeCodeBinary();
-  if (!executable) throw new Error(`Claude Code isn't installed anymore. Sign in with Claude again on the Model page in ${PANEL}.`);
-  return { executable, env: claudeCodeEnv() };
-}
+// Tokens a request may carry: kept tight for a quick reply out loud. opencode owns the model's real window.
+const requestBudget = () => Math.round(BUDGET_CAP / 2);
 // What a new agent runs on: the provider, model and route picked right now, with the chat's thinking level.
 async function agentModel() {
-  await refreshAuth();
-  if (!ensureModel()) throw new Error(`No AI model is signed in. Tell ${userName} to sign in on the Model page in ${PANEL}.`);
-  const cc = await claudeCodeRoute();
-  const m = getModel(config.model), c = cc ? {} : await credsFor().catch(() => ({}));
-  return {
-    provider: config.provider, model: config.model, route: cc ? 'claude-code' : 'api', cc: cc ?? undefined,
-    thinking: m?.supportsThinking ? (CHAT_THINKING ?? undefined) : undefined,
-    baseUrl: c.baseUrl, modelInfo: config.provider === 'local' ? m : undefined, budget: Math.round(getContextWindow(config.model, { provider: config.provider }) * 0.6),
-  };
+  const s = await refreshOpenCode();
+  if (!ensureModel()) throw new Error(`opencode isn't ready${s.reason ? `: ${s.reason}` : '. Install it, or check it runs in a terminal'} (Model page in ${PANEL}).`);
+  return { provider: 'opencode', model: config.opencodeModel, route: 'opencode', budget: 120_000 };
 }
 let agentRoute = null;
 // The chat's thinking level (null: off); side calls never think harder than this.
 const CHAT_THINKING = process.env.ROAMIES_THINKING === 'off' ? null : process.env.ROAMIES_THINKING || 'low';
-function makeAgent(cc) {
-  const m = getModel(config.model);
+// Which opencode session each of our conversations drives, so a rebuilt agent carries on in the same one.
+const ocSessions = new Map();
+function makeAgent() {
   controller = new AbortController();
-  const prior = forProvider(session?.messages ?? [], session?.provider, config.provider);
-  if (session) { session.provider = config.provider; session.model = config.model; }
-  agentRoute = cc ? 'claude-code' : 'api';
+  const prior = forProvider(session?.messages ?? [], session?.provider, 'opencode');
+  if (session) { session.provider = 'opencode'; session.model = config.opencodeModel; }
+  agentRoute = 'opencode';
+  const mine = session?.id;
   const common = {
-    model: config.model,
+    model: config.opencodeModel,
     system: system(),
     priorMessages: prior,
     tools,
     maxTurns: 24,
-    transformContext: (msgs, o) => {
-      const fitted = fitContext(msgs, { budgetTokens: requestBudget(), force: o?.force });
-      // Fresh live block every call, on the newest user message; older copies are dropped.
-      const out = withLive(fitted);
+    // The live block (settings, the app in front, memory) rides on the newest message, as before.
+    wrapPrompt: async (content) => {
+      const out = withLive([{ role: 'user', content }]);
       touchFacts(lastFactIds);
-      return out;
+      return out[0].content;
     },
-    thinking: m?.supportsThinking ? (CHAT_THINKING ?? undefined) : undefined,
     signal: controller.signal,
   };
-  if (cc) {
-    const sid = session?.id;
-    agent = new ClaudeCodeAgent({
-      ...common, executable: cc.executable, env: cc.env, cwd: HOME, keepWarm: true,
-      resume: ccResume?.session === sid ? ccResume.state : null,
-      onResume: (state) => { ccResume = { session: sid, state }; },
-    });
-    return;
-  }
-  agent = new Agent({
+  agent = new OpenCodeAgent({
     ...common,
-    provider: config.provider,
-    // One hour on Anthropic (falls back to 5 min elsewhere); the key keeps one conversation on one cache.
-    cacheRetention: 'long',
-    promptCacheKey: session?.id ? `roamies-${session.id}` : undefined,
-    transportSessionId: session?.id ? `roamies-${session.id}` : undefined, // OpenCode Go routes and caches by it
-    // No native search: the web_search tool works on every provider, and its results don't fill the context.
-    resolveCredentials: async () => {
-      const c = await credsFor();
-      return { apiKey: c.accessToken, ...(c.accountId !== undefined ? { accountId: c.accountId } : {}) };
-    },
-    baseUrl: credsBaseUrl,
+    sessionId: mine ? ocSessions.get(mine) ?? null : null,
+    onSession: (id) => { if (mine) ocSessions.set(mine, id); },
   });
 }
-let credsBaseUrl;
 
 // One run at a time: a new request waits for (or interrupts) the current one. Folding waits until none is left.
 let queued = 0;
@@ -768,7 +736,7 @@ const syncSession = () => {
 let lastInput = null; // { session, tokens, measured } from the newest model call
 let compacting = null, pendingFold = null;
 function maybeCompact() {
-  if (compacting || intro || busy || queued || !session?.messages.length || !config.model) return;
+  if (compacting || intro || busy || queued || !session?.messages.length || !config.opencodeModel) return;
   const tokens = lastInput?.session === session.id ? lastInput.tokens : 0;
   const trigger = compactTrigger(requestBudget());
   if (tokens < trigger) return;
@@ -805,7 +773,8 @@ function applyPendingFold() {
 // ---------- the memory pass ----------
 // Facts come only from here: what the fold call returns, and a pass over a conversation as it ends.
 async function sideRoute() {
-  return { provider: config.provider, model: config.model, cc: await claudeCodeRoute(), credsFor: (m) => credsFor(config.provider, m), cwd: HOME, chatThinking: CHAT_THINKING };
+  // Side calls run on opencode too, on the model picked in the panel.
+  return { provider: 'opencode', model: config.opencodeModel, credsFor: () => ({}), cwd: HOME, chatThinking: CHAT_THINKING };
 }
 async function learnFacts(facts) {
   const added = [];
@@ -917,29 +886,19 @@ let lastReply = '', lastFailed = false;
 async function readyAgent() {
   await resumed;
   await voiceKeysLoaded;
-  await refreshAuth();
-  if (!ensureModel()) { openPanel('model'); return 'Sign in to an AI provider first: I opened the Model page for you. Then ask me again!'; }
+  const st = await refreshOpenCode();
+  if (!ensureModel()) { openPanel('model'); return `opencode isn't ready${st.reason ? `: ${st.reason}` : ''}. I opened the Model page; check it, then ask me again.`; }
   if (config.provider === 'local') {
     if (!getModel(config.model)) await syncLocal();
     if (!getModel(config.model)) return ollama.reachable ? `Ollama doesn't have ${parseLocalModelId(config.model)?.rawId ?? 'that model'} anymore. Pick another model on the Model page in ${PANEL}.` : `Ollama isn't running. Open it, then ask me again!`;
     await measureLocal(config.model);
   }
-  if (!session) { session = newSession(config.provider, config.model); liveBlocks.clear(); agent = null; pruneSessions(); }
+  if (!session) { session = newSession('opencode', config.opencodeModel); liveBlocks.clear(); agent = null; pruneSessions(); }
   if (agentStale && agent) { agent = null; }
   agentStale = false;
-  let cc;
-  try { cc = await claudeCodeRoute(); } catch (e) { return aloud(problem('reply', e, { who: PROVIDER_LABELS[config.provider] })); }
-  if (agent && agentRoute !== (cc ? 'claude-code' : 'api')) agent = null; // signed in or out of Claude meanwhile
-  if (!agent) {
-    try { const c = await credsFor(); credsBaseUrl = c.baseUrl; credsAccountId = c.accountId; } catch { credsBaseUrl = undefined; credsAccountId = undefined; }
-    makeAgent(cc);
-  }
+  if (agent && agentRoute !== 'opencode') agent = null;
+  if (!agent) makeAgent();
   return null;
-}
-// About to be asked (talk keys down, the ask bubble open): Claude Code starts now instead of after the words
-// arrive. Queued like a request, so it never swaps the agent under one that's running.
-function warmUp() {
-  running = running.then(async () => { if (!busy && !(await readyAgent())) agent?.warm?.(); }).catch(() => {});
 }
 // The front window, looked up when the talk keys are let go: the words take a moment more to arrive.
 let frontSoon = null;
@@ -1567,8 +1526,11 @@ async function saveDiagnostics() {
 
 // The right-click menu: the basics. Everything else (memory, model, settings, updates) is in the panel.
 function menu() {
-  const current = getModel(config.model);
-  const status = busy ? `${lookName()} is working…` : loggingIn ? `Signing in to ${PROVIDER_LABELS[loggingIn]}…` : current ? `${current.name} · ${PROVIDER_LABELS[config.provider] ?? config.provider}` : 'Not signed in';
+  const ocName = ocModels.find((m) => m.id === config.opencodeModel)?.name ?? config.opencodeModel;
+  const status = busy ? `${lookName()} is working…`
+    : !ocState.checked ? `${lookName()} is starting…`
+    : ocState.ok && ocName ? `${ocName} · opencode`
+    : `opencode: ${ocState.reason || 'not found'} — see the Model page`;
   const items = [
     { id: 'status', label: status, enabled: false },
     { sep: true },
@@ -1610,8 +1572,10 @@ function panelState() {
     busy, canNew: !busy && !!session?.messages.length,
     // The type-to-ask shortcut, for the Ask button's tooltip (none on Wayland).
     askKeys: HOTKEYS_OK ? writeSymbols() : null,
-    model: current ? { provider: config.provider, id: config.model, name: current.name, providerLabel: PROVIDER_LABELS[config.provider] ?? config.provider } : null,
-    providers: MENU_PROVIDERS.map((p) => {
+    model: config.opencodeModel ? { provider: 'opencode', id: config.opencodeModel, name: ocModels.find((m) => m.id === config.opencodeModel)?.name ?? config.opencodeModel, providerLabel: 'opencode' } : null,
+    // The brain is opencode on this computer: its status and its models are what the Model page shows.
+    opencode: { ok: ocState.ok, reason: ocState.reason, checked: ocState.checked, models: ocModels.slice(0, 80).map((m) => ({ id: m.id, name: m.name })) },
+    providers: [].map((p) => {
       const meta = AUTH_PROVIDERS.find((x) => x.value === p);
       const on = !!signedIn.get(p);
       return {
@@ -1692,7 +1656,7 @@ const startVoiceDownload = () => {
 const PRIVACY = { microphone: 'Privacy_Microphone', speech: 'Privacy_SpeechRecognition' };
 function onVoice(m) {
   if (m.type === 'voice_state') { voiceBusy = m.state === 'listening' || m.state === 'processing'; stir(); }
-  if (m.type === 'voice_state' && m.state === 'listening') { interruptQuietly('listening'); speech.stop(); warmUp(); } // talking over it stops it
+  if (m.type === 'voice_state' && m.state === 'listening') { interruptQuietly('listening'); speech.stop(); } // talking over it stops it
   else if (m.type === 'voice_state' && m.state === 'processing') frontSoon = { at: Date.now(), p: whereNow() };
   else if (m.type === 'voice' && m.text?.trim()) {
     // Key release to the words arriving (mic tail and the recogniser finishing), to see what that step costs.
@@ -1758,7 +1722,6 @@ function shellAnswer(m) {
 // from it interrupts a reply that's still running, as talking over it does.
 let barAsk = null;
 async function typeToAsk({ interrupt = false } = {}) {
-  warmUp();
   const ctl = barAsk = new AbortController();
   const text = await ask({ placeholder: 'Ask me anything…', bar: true }, ctl.signal);
   if (barAsk === ctl) barAsk = null;
@@ -1796,11 +1759,12 @@ async function onMenu(id, via) {
     });
   }
   else if (id.startsWith('model:')) {
-    const [, p, ...rest] = id.split(':');
-    config.provider = p; config.model = rest.join(':'); agent = null; saveConfig(); menu();
-    say(`Switched to ${getModel(config.model)?.name ?? config.model}.`, 'happy');
-    if (p === 'local') measureLocal(config.model).catch(() => {});
-  } else if (id.startsWith('login:')) oauthLogin(id.slice(6));
+    const v = id.slice(6).replace(/^opencode:/, '');
+    if (!v || !ocModels.some((m) => m.id === v)) return;
+    config.opencodeModel = v; agent = null; saveConfig(); menu();
+    say(`Model: ${ocModels.find((m) => m.id === v)?.name ?? v}.`, 'determined');
+  } else if (id === 'opencode:refresh') { await refreshOpenCode(); menu(); panelNote(ocState.ok ? `${ocModels.length} models from opencode.` : `opencode: ${ocState.reason}`, !ocState.ok); }
+  else if (id.startsWith('login:')) oauthLogin(id.slice(6));
   else if (id.startsWith('key:')) apiKeyLogin(id.slice(4));
   else if (id.startsWith('signout:')) signOut(id.slice(8));
   else if (id === 'local:connect') connectOllama();
@@ -1960,7 +1924,6 @@ async function introAnswer(text) {
 
 // ---------- setup guide ----------
 function obState() {
-  const current = getModel(config.model);
   ob({
     kind: 'state',
     platform: process.platform,
@@ -1968,9 +1931,9 @@ function obState() {
     // global shortcuts (bind: the commands to bind in the desktop's settings instead) and no Cursor size.
     snap: SNAP_OK, circle: CIRCLE_OK, session: SESSION, bind: HOTKEYS_OK ? null : BIND, sizes: SIZES,
     step: config.onboardStep ?? 0,
-    oauth: signInCards(Object.keys(OAUTH), (id) => oauthOn.get(id), PROVIDER_LABELS),
-    apikey: keyCards(AUTH_PROVIDERS, (id) => keyOn.get(id)),
-    connected: current && signedIn.get(config.provider) ? { provider: PROVIDER_LABELS[config.provider] ?? config.provider, model: current.name } : null,
+    // The brain is opencode on this computer: its status and models are all this step shows.
+    opencode: { ok: ocState.ok, reason: ocState.reason, models: ocModels.slice(0, 80).map((m) => ({ id: m.id, name: m.name })) },
+    model: config.opencodeModel ? { id: config.opencodeModel, name: ocModels.find((m) => m.id === config.opencodeModel)?.name ?? config.opencodeModel } : null,
     keys: keys(),
     actions: config.allowActions,
     login: login.supported ? login.on : null,
@@ -2027,9 +1990,9 @@ async function onGuide(m) {
     const note = (text, bad, p) => ob({ kind: 'fish', ok: !bad, error: bad ? text : null, ...(bad && p ? linked(p) : {}) });
     await voiceKeyLogin({ provider: m.type === 'ob_geminikey' ? 'gemini' : 'fish', given: m.key.slice(0, 1000), thenVoice: true, note }).catch((e) => { const p = problem('key', e, { store: KEY_STORE }); note(p.text, true, p); });
   }
-  else if (m.type === 'ob_login' && OAUTH[m.provider]) oauthLogin(m.provider, typeof m.id === 'string' ? m.id.slice(0, 40) : undefined);
-  else if (m.type === 'ob_login_cancel') cancelLogin(typeof m.id === 'string' ? m.id : undefined);
-  else if (m.type === 'ob_apikey') apiKeyLogin(m.provider, String(m.key ?? '')).catch((e) => { const p = problem('key', e, { store: KEY_STORE }); ob({ kind: 'login', provider: m.provider, phase: 'error', error: p.text, ...linked(p) }); });
+  // The guide's brain step: look at opencode again, or pick one of its models.
+  else if (m.type === 'ob_check_opencode') { await refreshOpenCode(); obState(); }
+  else if (m.type === 'ob_model' && typeof m.id === 'string' && ocModels.some((x) => x.id === m.id)) { config.opencodeModel = m.id; agent = null; saveConfig(); menu(); obState(); }
   else if (m.type === 'ob_files') ob({ kind: 'files', status: await filesStatus(!!m.request) });
   else if (m.type === 'set_actions') { config.allowActions = !!m.on; agents.setAllow(config.allowActions); saveConfig(); menu(); obState(); }
   else if (m.type === 'set_login') setLogin(!!m.on);
@@ -2077,13 +2040,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   else if (m.type === 'panel_open') { panelOpen = true; panelAt = Date.now(); logLine('panel_open', {}); Promise.all([refreshAuth(), signedIn.get('local') && syncLocal(), tts().local && speech.checkLocal()]).catch(() => {}).finally(() => panel()); }
   else if (m.type === 'diagnostics') { shellInfo?.(m); shellInfo = null; }
   else if (m.type === 'panel_closed') { panelOpen = false; logLine('panel_closed', { why: String(m.why ?? ''), ms: Date.now() - panelAt }); }
-  else if (m.type === 'panel_key' && typeof m.provider === 'string' && typeof m.key === 'string') {
-    const id = typeof m.kind === 'string' ? m.kind : m.provider;
-    const label = PROVIDER_LABELS[m.provider] ?? m.provider;
-    if (storageKeyProvider(id) !== m.provider) return;
-    apiKeyLogin(id, m.key.slice(0, 1000)).then(() => panelNote(signedIn.get(m.provider) ? `${label} is connected.` : `That ${label} key didn't work.`, !signedIn.get(m.provider)))
-      .catch((e) => { const p = problem('key', e, { store: KEY_STORE }); panelNote(p.text, true, p); });
-  } else if ((m.type === 'panel_fishkey' || m.type === 'panel_geminikey') && typeof m.key === 'string') voiceKeyLogin({ provider: m.type === 'panel_geminikey' ? 'gemini' : 'fish', given: m.key.slice(0, 1000), note: panelNote }).catch((e) => console.error('voice key', e));
+  else if ((m.type === 'panel_fishkey' || m.type === 'panel_geminikey') && typeof m.key === 'string') voiceKeyLogin({ provider: m.type === 'panel_geminikey' ? 'gemini' : 'fish', given: m.key.slice(0, 1000), note: panelNote }).catch((e) => console.error('voice key', e));
   else if (m.type === 'answer') { pending.get(m.id)?.(m.text ?? null); pending.delete(m.id); }
   else if (m.type === 'ui_ready') {
     retired.then((notes) => { if (notes.length) { retired = Promise.resolve([]); say(`${notes.join(' ')} Do it on the Model page in ${PANEL}.`, 'concerned'); } });
@@ -2139,7 +2096,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   // The app quit (or is restarting for an update): save a reply still running, let the last saves land, never hang.
   if (busy) syncSession();
   agents.stopAll();
-  closeSpare();
+  stopOpenCode();
   Promise.race([flushWrites(), new Promise((r) => setTimeout(r, 3000))]).finally(() => process.exit(0));
 });
 
@@ -2152,11 +2109,9 @@ let retired = (async () => {
 })();
 await retired;
 await refreshAuth();
-// Before ensureModel, so a local model that's picked is still there.
-if (signedIn.get('local')) await syncLocal();
+// The brain is opencode: ask it which models this computer has before the first request.
+await refreshOpenCode().catch(() => {});
 ensureModel();
-// The first request after launch gets a warm Claude Code too.
-if (config.onboarded) warmUp();
 // Due commitments turn into a nudge, but only when Sidekick isn't mid-conversation.
 async function remindTick() {
   if (busy || queued || loggingIn || onboarding) { reminderRetry(); return; }
@@ -2197,7 +2152,7 @@ menu();
 overlays();
 sendKeys();
 send({ type: 'login_item' });
-logLine('start', { version: VERSION, platform: process.platform, ...(LINUX ? { session: SESSION } : {}), model: config.model });
+logLine('start', { version: VERSION, platform: process.platform, ...(LINUX ? { session: SESSION } : {}), model: config.opencodeModel });
 // Windows 11: the tray icon is shown next to the clock once (wintray.mjs); after that, hiding it again is up to them.
 // Explorer adds its entry a moment after the icon appears, so it's looked for a few times.
 if (process.platform === 'win32' && process.env.ROAMIES_EXE && !config.trayShown) {

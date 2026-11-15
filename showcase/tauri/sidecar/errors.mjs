@@ -76,7 +76,7 @@ const AREAS = {
     code: 'E50',
     unknown: () => "I couldn't hear that (E50). Try again.",
     known: [
-      ['E51', /onnx|parakeet|voice model|model (?:file|load|missing|not found)/i, () => "My voice model didn't load. Restart Roamies.", true],
+      ['E51', /whisper|ggml|onnx|parakeet|voice model|model (?:file|load|missing|not found)/i, () => "My voice model didn't load. Restart Roamies.", true],
       ['E52', NET, () => 'Speech recognition needs the internet. Try again.'],
     ],
   },

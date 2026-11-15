@@ -4,8 +4,8 @@
   const R = window.Roamie;
   if (!R || typeof document === 'undefined') return;
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-  const ACC = '#78ffe2', HOT = '#e6fffa', MID = '#28c4b8', DEEP = '#0e5c60', EDGE = 'rgba(3,39,34,0.6)';
-  const GLASS = 'rgba(6,22,24,0.94)', TEXT = '#dcfff6', DIM = '#8ab8b0', CORAL = '#ff8a7a', NOTE = '#e9a196';
+  const ACC = '#b3131b', HOT = '#e6e7ea', MID = '#b3131b', DEEP = '#3a1114', EDGE = 'rgba(20,10,12,0.6)';
+  const GLASS = 'rgba(6,22,24,0.94)', TEXT = '#e6e7ea', DIM = '#8a8d94', CORAL = '#ff8a7a', NOTE = '#e9a196';
   const MONO = '"Martian Mono", ui-monospace, monospace';
   const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
   const rgba = (h, a) => `rgba(${hex(h).join(',')},${a})`;
@@ -102,7 +102,7 @@
 
   // A pixel button like the drawings' chips (ink.js): filled is teal with dark ink, otherwise dark glass with a teal
   // edge and light ink. focus adds a bright ring, so the keyboard's choice shows; down presses it into its shadow.
-  const CHIP_F = `700 11px ${MONO}`, INK_DARK = '#032722';
+  const CHIP_F = `700 11px ${MONO}`, INK_DARK = '#140a0c';
   const mix = (a, b, k) => `rgb(${hex(a).map((v, i) => Math.round(v + (hex(b)[i] - v) * k)).join(',')})`;
   const chipW = (label) => Math.round(textW(label, CHIP_F) + 22);
   function chip(c, x, y, w, h, label, o = {}) {

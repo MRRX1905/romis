@@ -1,4 +1,4 @@
-// Voice helper (macOS: Apple speech; Windows: Parakeet on the PC) and the global shortcuts.
+// Voice helper (macOS: Apple speech; Windows: Whisper on the PC) and the global shortcuts.
 
 use super::*;
 use std::cell::RefCell;
@@ -39,6 +39,9 @@ pub(crate) fn start_voice(app: &AppHandle) {
     cmd.arg("--chord").arg(chord);
     if let Some(dir) = app.state::<VoiceModel>().0.lock().unwrap().clone() {
         cmd.arg("--model").arg(dir);
+        // Roamies answers in Bahasa Indonesia, so the mic is read in it too: Whisper guesses wrong on a short command
+        // and English words come out of Indonesian speech.
+        cmd.arg("--lang").arg("id");
     }
     // Debug builds: ROAMIES_TEST_AUDIO=<wav> stands in for the microphone, to test talking with no mic (CI, Docker).
     #[cfg(debug_assertions)]

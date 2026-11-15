@@ -4,7 +4,7 @@
 import { Agent } from '@kenkaiiii/gg-agent';
 import { REDACTION_MARKER, environmentSecrets, redactText } from '@kenkaiiii/gg-ai';
 import { getLowestThinkingLevel, getModel, getSummaryModel } from '@kenkaiiii/gg-core';
-import { ClaudeCodeAgent } from './claudecode.mjs';
+import { oneShot as opencodeOneShot } from './opencode.mjs';
 import { agentEvents } from './agentstream.mjs';
 
 const TIMEOUT_MS = 120_000;
@@ -28,21 +28,9 @@ export function sideThinking(provider, model, cap) {
 }
 
 async function once({ system, text, provider, model, cc, credsFor, cwd, signal, chatThinking }) {
-  const thinking = sideThinking(provider, model, chatThinking);
-  const common = { model, system, tools: [], maxTurns: 1, thinking, signal };
-  const agent = cc
-    ? new ClaudeCodeAgent({ ...common, executable: cc.executable, env: cc.env, cwd })
-    : new Agent({
-      ...common, provider,
-      resolveCredentials: async () => { const c = await credsFor(model); return { apiKey: c.accessToken, ...(c.accountId !== undefined ? { accountId: c.accountId } : {}) }; },
-      baseUrl: (await credsFor(model).catch(() => null))?.baseUrl,
-    });
-  let out = '';
-  for await (const e of agentEvents(agent.prompt(text))) {
-    if (e.type === 'text_delta') out += e.text;
-    else if (e.type === 'error') throw e.error;
-  }
-  if (!out.trim()) throw new Error('empty reply');
+  // Side calls run on opencode too, so nothing here needs an API key.
+  const out = await opencodeOneShot({ system, text, model: model ?? null, signal });
+  if (!out) throw new Error('empty reply');
   return out;
 }
 
@@ -53,7 +41,7 @@ async function once({ system, text, provider, model, cc, credsFor, cwd, signal, 
  */
 export async function oneShot(o) {
   const signal = AbortSignal.any([AbortSignal.timeout(TIMEOUT_MS), ...(o.signal ? [o.signal] : [])]);
-  const first = summaryModelFor(o.provider, o.model);
+  const first = o.model;
   try {
     return { text: await (o.run ?? once)({ ...o, model: first, signal }), model: first };
   } catch (e) {

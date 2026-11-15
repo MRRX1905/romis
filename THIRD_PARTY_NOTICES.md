@@ -12,8 +12,9 @@ Roamies is licensed under [AGPL-3.0](LICENSE). It builds on the components below
 | Claude Code | downloaded at sign-in with Claude, not bundled | Anthropic's terms |
 | [Doto](https://github.com/oliverlalan/Doto) and [Martian Mono](https://github.com/evilmartians/mono) fonts | text in the app | SIL Open Font License 1.1, texts in `showcase/onboarding/fonts/` |
 | [Natural Earth](https://www.naturalearthdata.com) 1:110m countries | country outlines for map cards (`showcase/roamies/world.js`) and their names (`showcase/tauri/sidecar/countries.mjs`) | Public domain |
-| [NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), [ONNX export by istupakov](https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx) | Windows speech model, downloaded at setup, not bundled | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
-| [parakeet-rs](https://github.com/altunenes/parakeet-rs) 0.4.3 | runs the speech model in the Windows voice helper | MIT OR Apache-2.0 |
+| [Whisper](https://github.com/openai/whisper) small, ggml q5_1 model from [whisper.cpp](https://github.com/ggml-org/whisper.cpp) | Windows and Linux speech model, downloaded at setup, not bundled | MIT |
+| [whisper-rs](https://github.com/tazz4843/whisper-rs) 0.16.0 | runs the speech model in the Windows and Linux voice helper | Unlicense |
+| [whisper.cpp](https://github.com/ggml-org/whisper.cpp) | speech recognition in the voice helper, via whisper-rs | MIT |
 
 ## Full dependency list
 

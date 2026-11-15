@@ -18,7 +18,7 @@ for (const [name, kind] of Object.entries(kinds)) assert.equal(fileKind(name), k
 assert.equal(fileKind('build', true), 'folder', 'a folder by its flag');
 assert.equal(KINDS.length, 13);
 // Each icon: a 12 x 12 grid of crisp cells in the teal family only, different from every other icon.
-const TEAL = new Set(['#051214', '#0e5c60', '#28c4b8', '#78ffe2', '#e6fffa']);
+const TEAL = new Set(['#050608', '#3a1114', '#7a1b20', '#b3131b', '#e6e7ea']);
 const seen = new Set();
 for (const k of KINDS) {
   const svg = icon(k);

@@ -233,7 +233,7 @@
   // The same LED renderer as on the desktop and in the setup guide, drawn small: one in the header (the Roamie
   // you have, reacting to what's going on) and one per look on the Appearance page. One loop draws them all,
   // only while the panel is up and each canvas is on screen.
-  const LED = [[4, 16, 18], [14, 92, 96], [40, 196, 184], [120, 255, 226], [230, 255, 250]];
+  const LED = [[5, 8, 10], [58, 17, 20], [122, 27, 32], [179, 19, 27], [230, 231, 234]];
   const live = new Set();
   let pointer = null; // the cursor in page px, for their eyes
   addEventListener('pointermove', (e) => { pointer = [e.clientX, e.clientY]; }, { passive: true });
@@ -459,43 +459,24 @@
       row);
   }
 
-  const signIn = (p) => link('Sign in', () => act(`login:${p.id}`), { k: `login:${p.id}`, aria: `Sign in to ${p.label}`, disabled: !!state.loggingIn });
-  const connect = (p) => link('Connect', () => act('local:connect'), { k: 'local:connect', aria: `Connect ${p.label}` });
-  const addKey = (p) => link(ui.key === p.id ? 'Cancel' : 'Add key', () => toggleKey(p.id), { k: `addkey:${p.id}`, aria: `Add ${p.label} API key` });
-
-  // A connected account's key: replace it (saving under the same kind overwrites it), or add one next to a sign-in.
-  const changeKey = (p) => link(ui.key === p.id ? 'Cancel' : p.keySaved ? 'Change key' : 'Add key', () => toggleKey(p.id),
-    { k: `addkey:${p.id}`, aria: `${p.keySaved ? 'Change the' : 'Add a'} ${p.label} API key` });
-
   // Settings, one page per concern.
   function modelPage() {
-    const on = state.providers.filter((p) => p.on);
-    const model = state.model ? `${state.model.provider}:${state.model.id}` : '';
-    const select = on.length ? el('span', { className: 'px field select' },
+    // The brain is the opencode CLI on this computer: the page shows whether it answers, and its models.
+    const oc = state.opencode ?? { ok: false, reason: '', models: [] };
+    const model = state.model ? state.model.id : '';
+    const select = oc.models.length ? el('span', { className: 'px field select' },
       el('select', { 'aria-label': 'Model', 'data-k': 'model', on: { change: (e) => act(`model:${e.target.value}`) } },
         model ? null : el('option', { value: '', textContent: 'Pick a model', disabled: true, selected: true }),
-        on.map((p) => el('optgroup', { label: p.label }, p.models.map((m) => el('option', { value: `${p.id}:${m.id}`, textContent: m.name, selected: `${p.id}:${m.id}` === model })))))) : null;
-    const accounts = state.providers.filter((p) => p.on || p.method);
-    const { box, nav } = paged('accounts', accounts, (p) => el('li', { className: `acct${ui.key === p.id ? ' open' : ''}` },
-      el('div', { className: 'setting' },
-        // Connected: a lit dot by the name, its word in a tooltip (and for screen readers).
-        el('span', { className: 'acct-name' }, p.label, p.on ? el('span', { className: 'led on', role: 'img', 'aria-label': p.method === 'local' ? 'Connected' : 'Signed in', 'data-tip': p.method === 'local' ? 'Connected' : 'Signed in' }) : null),
-        p.on ? el('span', { className: 'row-btns' },
-          p.key ? changeKey(p) : null,
-          ui.key === p.id ? null : armed(p.signedIn && !p.keySaved ? 'Sign out' : 'Remove', 'Confirm', `signout:${p.id}`, `signout:${p.id}`, `Remove ${p.label} from Roamies`))
-          : state.loggingIn === p.id ? el('span', { className: 'waiting', textContent: 'Signing in…' })
-          : p.method === 'local' ? connect(p)
-          : p.method === 'oauth' ? (p.key ? el('span', { className: 'links' }, signIn(p), addKey(p)) : signIn(p))
-          : addKey(p)),
-      // Ollama: why its models aren't in the Model menu (not running, or none can see images).
-      p.note ? el('p', { className: 'empty note', textContent: p.note }) : null,
-      p.method === 'key' || p.key ? keyForm(p.id, p.label, (key, kind) => send({ type: 'panel_key', provider: p.id, kind, key }), p.kinds) : null),
-    { label: 'Accounts', pin: accounts.findIndex((p) => p.id === ui.key) });
+        el('optgroup', { label: 'opencode' }, oc.models.map((m) => el('option', { value: m.id, textContent: m.name, selected: m.id === model }))))) : null;
     return [
-      group('Model', 'Which AI answers you.', null,
-        select ?? el('p', { className: 'empty', textContent: 'Sign in to an account below first.' })),
-      el('div', { className: 'group paged' }, el('div', { className: 'ghead' }, el('h2', { textContent: 'Accounts' }), el('p', { textContent: 'Sign in to use their models.' })), box),
-      foot(null, nav),
+      group('Model', 'Which AI answers you, from opencode.', null,
+        select ?? el('p', { className: 'empty', textContent: oc.ok ? 'opencode is running but offers no models yet.' : `opencode isn't answering: ${oc.reason || 'not found on PATH'}.` })),
+      group('opencode', 'The brain runs on the opencode CLI on your computer. No API key here.', null,
+        el('div', { className: 'setting' },
+          el('span', { className: 'acct-name' }, 'opencode', oc.ok ? el('span', { className: 'led on', role: 'img', 'aria-label': 'Running', 'data-tip': 'Running' }) : null),
+          el('span', { className: 'row-btns' }, link('Check again', () => act('opencode:refresh'), { k: 'opencode:refresh', aria: 'Check opencode again' }))),
+        el('p', { className: 'empty note', textContent: oc.ok ? `${oc.models.length} models this computer can use. Pick one above; side calls use it too.` : (oc.reason || 'Install opencode and run it once in a terminal, then check again.') })),
+      foot(null, null),
     ];
   }
   function appearancePage() {
@@ -854,17 +835,8 @@
       version: '0.9.0', os: /Win/.test(navigator.platform) ? 'win' : 'mac',
       status: { state: 'ready', text: 'Ready' }, busy: false, canNew: true,
       model: { provider: 'anthropic', id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5', providerLabel: 'Anthropic' },
-      providers: [
-        { id: 'anthropic', label: 'Anthropic', on: true, method: 'oauth', key: true, signedIn: true, models: [{ id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5' }, { id: 'claude-sonnet-5', name: 'Claude Sonnet 5' }] },
-        { id: 'openai', label: 'OpenAI', on: false, method: 'oauth', key: true, models: [] },
-        { id: 'gemini', label: 'Gemini', on: true, method: 'key', key: true, keySaved: true, models: [{ id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash' }] },
-        { id: 'moonshot', label: 'Kimi (Moonshot)', on: false, method: 'key', models: [], kinds: [
-          { id: 'kimi-code', label: 'Kimi Code', billing: 'Uses your Kimi Code plan. Create the key in the Kimi Code Console.' },
-          { id: 'moonshot', label: 'Moonshot', billing: 'Pay-per-token from platform.moonshot.ai.' }] },
-        { id: 'local', label: 'Ollama (on this computer)', on: false, method: 'local', models: [] },
-        ...['xAI', 'GLM (Z.ai)', 'MiniMax', 'Xiaomi', 'DeepSeek', 'Sakana', 'OpenRouter', 'Hugging Face'].map((label) => ({ id: label.toLowerCase().replace(/\W/g, ''), label, on: false, method: 'key', models: [] })),
-      ],
-      loggingIn: null,
+      // The brain is opencode on this computer: which models it offers, and whether it answers.
+      opencode: { ok: true, reason: '', models: [{ id: 'opencode/iceman-free', name: 'iceman-free' }, { id: 'opencode/big-pickle', name: 'big-pickle' }, { id: '9router/oc/beam-free', name: 'oc/beam-free' }] },
       recent: [
         { at: at - 20e3, kind: 'did', text: 'Saved to memory' },
         { at: at - 25e3, kind: 'did', text: 'Searched the web' },

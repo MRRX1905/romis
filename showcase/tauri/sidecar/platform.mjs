@@ -51,10 +51,10 @@ export function writeChord(platform, talk, saved) {
   return offered.find((c) => samePair(c, saved) && !samePair(c, talk)) ?? offered.find((c) => !samePair(c, talk)) ?? offered[0];
 }
 
-/** Voice in: Apple's speech on macOS, Parakeet on the PC on Windows and Linux. */
+/** Voice in: Apple's speech on macOS, Whisper on the PC on Windows and Linux. */
 export const hasVoice = (platform) => platform === 'darwin' || platform === 'win32' || platform === 'linux';
 
-/** The speech model has to be downloaded first (Parakeet): Windows and Linux. */
+/** The speech model has to be downloaded first (Whisper): Windows and Linux. */
 export const needsVoiceModel = (platform) => platform === 'win32' || platform === 'linux';
 
 /** Whether the hands helper's tools are on: always on macOS (they explain what's missing), elsewhere when the

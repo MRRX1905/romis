@@ -956,6 +956,6 @@
   Roamie.register(Roamie.ditherKit({
     id: 'dither', label: 'Dither blob', bg: '#0f380f',
     pal: [[15, 56, 15], [48, 98, 48], [139, 172, 15], [155, 188, 15]],
-    grid: 'rgba(15,56,15,0.18)',
+    grid: 'rgba(122,27,32,0.18)',
   }));
 })();

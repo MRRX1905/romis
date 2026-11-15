@@ -89,7 +89,7 @@ jobs:
       - name: Test the app shell
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml
 
-      # --release reuses the voice helper build.sh just made instead of compiling Parakeet again.
+      # --release reuses the voice helper build.sh just made instead of compiling Whisper again.
       - name: Test the Linux voice helper
         if: runner.os == 'Linux'
         run: cargo test --release --locked --manifest-path src-tauri/voice-win/Cargo.toml

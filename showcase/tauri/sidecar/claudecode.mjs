@@ -222,9 +222,12 @@ function stripNulls(v) {
   if (v !== null && typeof v === 'object') return Object.fromEntries(Object.entries(v).filter(([, x]) => x !== null).map(([k, x]) => [k, stripNulls(x)]));
   return v;
 }
-const preview = (c) => (typeof c === 'string' ? c : c.map((b) => (b.type === 'text' ? b.text : `[${b.type} ${b.mediaType}]`)).join('\n'));
+// A tool may hand back a string, content blocks, or a plain object (many Roamies tools answer with one): all of them
+// have to render as text here, or the bridge throws while formatting its own result.
+const asBlocks = (c) => (Array.isArray(c) ? c : c == null ? [] : [{ type: 'text', text: typeof c === 'string' ? c : JSON.stringify(c) }]);
+const preview = (c) => (typeof c === 'string' ? c : asBlocks(c).map((b) => (b?.type === 'text' ? (b.text ?? '') : `[${b?.type} ${b?.mediaType ?? ''}]`)).join('\n'));
 const toMcpContent = (c) => (typeof c === 'string' ? (c ? [{ type: 'text', text: c }] : [])
-  : c.map((b) => (b.type === 'text' ? { type: 'text', text: b.text } : b.type === 'image' ? { type: 'image', data: b.data, mimeType: b.mediaType } : { type: 'text', text: `[${b.mediaType} omitted: not supported here]` })));
+  : asBlocks(c).filter((b) => b?.type !== 'text' || b.text).map((b) => (b.type === 'text' ? { type: 'text', text: b.text ?? '' } : b.type === 'image' && b.data ? { type: 'image', data: b.data, mimeType: b.mediaType } : { type: 'text', text: `[${b.mediaType ?? b.type} omitted: not supported here]` })));
 
 export function createToolBridge({ tools, signal, maxToolResultChars, onEvent }) {
   const results = new Map(), invalidCounts = new Map();
@@ -244,7 +247,9 @@ export function createToolBridge({ tools, signal, maxToolResultChars, onEvent })
         const sig = typeof signal === 'function' ? signal() : signal;
         const signals = [cancel, AbortSignal.timeout(tool.timeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS), ...(sig ? [sig] : [])];
         const raw = await tool.execute(parsed, { signal: AbortSignal.any(signals), toolCallId, onUpdate: (update) => onEvent({ type: 'tool_call_update', toolCallId, update }) });
-        const out = typeof raw === 'string' ? { content: raw } : raw;
+        // String and block-array results are content; anything else is a plain object, shown as JSON and kept as details.
+        const out = typeof raw === 'string' || raw == null || Array.isArray(raw) ? { content: raw }
+          : Object.hasOwn(raw, 'content') ? raw : { content: JSON.stringify(raw), details: raw };
         content = out.content; details = out.details;
         for (const k of invalidCounts.keys()) if (k.startsWith(`${name}:`)) invalidCounts.delete(k);
       } catch (err) {

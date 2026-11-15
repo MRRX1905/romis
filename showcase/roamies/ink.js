@@ -9,10 +9,10 @@
 
   // ---------------------------------------------------------------- look
   const P = 4, MONO = '"Martian Mono", ui-monospace, monospace', DOTO = '"Doto", "Martian Mono", ui-monospace, monospace';
-  const ACC = '#78ffe2', HOT = '#e6fffa', MID = '#28c4b8', DEEP = '#0e5c60', EDGE = 'rgba(3,39,34,0.6)';
-  const GLASS = 'rgba(6,22,24,0.94)', TEXT = '#dcfff6', DIM = '#8ab8b0', INKDARK = '#032722';
-  const TONES = { accent: ACC, teal: '#78ffe2', amber: '#ffcf5c', coral: '#ff8a7a', lilac: '#b9a4ff', sky: '#7cc8ff', lime: '#b6f36b', red: '#ff6b6b', white: '#e8fffa' };
-  const LED = ['#051214', '#0e5c60', '#28c4b8', '#78ffe2', '#e6fffa'];
+  const ACC = '#b3131b', HOT = '#e6e7ea', MID = '#b3131b', DEEP = '#3a1114', EDGE = 'rgba(20,10,12,0.6)';
+  const GLASS = 'rgba(6,22,24,0.94)', TEXT = '#e6e7ea', DIM = '#8a8d94', INKDARK = '#140a0c';
+  const TONES = { accent: ACC, teal: '#7a1b20', amber: '#ffcf5c', coral: '#ff8a7a', lilac: '#b9a4ff', sky: '#7cc8ff', lime: '#b6f36b', red: '#ff6b6b', white: '#e6e7ea' };
+  const LED = ['#050608', '#3a1114', '#7a1b20', '#b3131b', '#e6e7ea'];
   const B4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
   const tone = (t) => TONES[t] || ACC;
   const now = () => performance.now() / 1000;
@@ -622,7 +622,7 @@
         chrome(b, x, y, this.cw, this.ch, { edge: o.edge ? colorOf(this, this.color) : ACC });
         if (this.p < 1) return;
         if (bar) {
-          b.fillStyle = 'rgba(120,255,226,0.06)'; b.fillRect(x + 2, y + 2, w - 4, bar - 2);
+          b.fillStyle = 'rgba(179, 19, 27,0.06)'; b.fillRect(x + 2, y + 2, w - 4, bar - 2);
           b.fillStyle = DEEP; b.fillRect(x + 2, y + bar, w - 4, 1);
           [0, 1].forEach((k) => { b.fillStyle = k ? DEEP : ACC; b.fillRect(x + 12 + k * 12, y + 11, 5, 5); });
           if (o.title) typed(b, ellipsize(String(o.title).toLowerCase(), w - 176, `500 10px ${MONO}`), x + w / 2, y + 17, `500 10px ${MONO}`, DIM, (t - this.done) / 0.4, { anchor: 'middle' });
@@ -1956,7 +1956,7 @@
     if (cw < 4) return;
     chrome(b, x, y, cw, ch);
     if (!this.ready) return;
-    b.fillStyle = 'rgba(120,255,226,0.06)'; b.fillRect(x + 2, y + 2, w - 4, 24);
+    b.fillStyle = 'rgba(179, 19, 27,0.06)'; b.fillRect(x + 2, y + 2, w - 4, 24);
     b.fillStyle = DEEP; b.fillRect(x + 2, y + 26, w - 4, 1);
     [0, 1].forEach((k) => { b.fillStyle = k ? DEEP : ACC; b.fillRect(x + 12 + k * 12, y + 11, 5, 5); });
     typed(b, 'reminders', x + w / 2, y + 17, `500 10px ${MONO}`, DIM, (t - this.opened) / 0.4, { anchor: 'middle' });

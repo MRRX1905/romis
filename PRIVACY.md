@@ -42,7 +42,7 @@ Each provider's own privacy policy applies to what is sent to it.
 
 - **macOS:** speech is turned into text on your Mac by Apple's on-device recognizer. On Macs where on-device
   recognition isn't available, Apple's recognizer may use Apple's servers, under Apple's terms.
-- **Windows and Linux:** speech is turned into text on your computer (Parakeet).
+- **Windows and Linux:** speech is turned into text on your computer (Whisper).
 - The microphone is used only while you hold the talk keys (or, on Linux with Wayland, from your talk shortcut
   until you press it again or pause).
 - **Wake word (macOS, off by default):** when you turn it on, the microphone stays open so Roamies can hear

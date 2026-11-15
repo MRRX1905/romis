@@ -1,6 +1,7 @@
-// The speech model for voice on Windows and Linux: NVIDIA Parakeet TDT 0.6B v3, int8 ONNX export (CC-BY-4.0,
-// huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx), pinned to one commit and checked by SHA-256.
-// Downloaded once into the user's local app data; interrupted downloads resume where they stopped.
+// The speech model for voice on Windows and Linux: Whisper small, 5-bit quantised for whisper.cpp (MIT,
+// huggingface.co/ggerganov/whisper.cpp). Whisper is multilingual, which Parakeet was not: Parakeet only heard English,
+// so Indonesian speech came back as guessed English words. Checked by SHA-256, downloaded once into the user's local
+// app data; interrupted downloads resume where they stopped.
 import { createHash } from 'node:crypto';
 import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import fs from 'node:fs/promises';
@@ -8,13 +9,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
 
+// Base, not small: the take is read again about every second while you talk, and on a laptop CPU the small model is
+// four times the work for a command that is a few seconds long.
 export const MODEL = {
-  id: 'parakeet-tdt-0.6b-v3-int8',
-  base: 'https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce/',
+  id: 'whisper-base-q5_1',
+  base: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/',
   files: [
-    { name: 'encoder-model.int8.onnx', size: 652183999, sha256: '6139d2fa7e1b086097b277c7149725edbab89cc7c7ae64b23c741be4055aff09' },
-    { name: 'decoder_joint-model.int8.onnx', size: 18202004, sha256: 'eea7483ee3d1a30375daedc8ed83e3960c91b098812127a0d99d1c8977667a70' },
-    { name: 'vocab.txt', size: 93939, sha256: 'd58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d' },
+    { name: 'ggml-base-q5_1.bin', size: 59707625, sha256: '422f1ae452ade6f30a004d7e5c6a43195e4433bc370bf23fac9cc591f01a8898' },
   ],
 };
 
